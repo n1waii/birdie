@@ -4,11 +4,26 @@
  * Sends data to server via WiFi
  */
 
+#include <Arduino.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <Wire.h>
 #include <ArduinoJson.h>
 
+void calibrateGyro();
+void initializeMPU();
+void readAccelData(float* x, float* y, float* z);
+void readGyroData(float* x, float* y, float* z);
+float readTemperature();
+void writeRegister(uint8_t deviceAddress, uint8_t address, uint8_t val);
+void connectToWiFi();
+void sendDataToServer(float accelX, float accelY, float accelZ,
+                      float gyroX, float gyroY, float gyroZ,
+                      float absGyroX, float absGyroY, float absGyroZ,
+                      float temperature);
+              
+
+            
 // MPU6050 I2C address
 #define MPU_ADDR 0x68
 
@@ -17,8 +32,8 @@ const char* ssid = "YOUR_WIFI_SSID";        // Change to your WiFi name
 const char* password = "YOUR_WIFI_PASSWORD"; // Change to your WiFi password
 
 // Server endpoint - UPDATE THIS
-const char* serverURL = "http://localhost:8080/api/sensor-data"; // Change to your laptop's IP
- 
+const char* serverURL = "http://localhost:8080/api/sensor-data"; // Change to your laptop's IP 
+
  // MPU6050 register addresses
  #define PWR_MGMT_1 0x6B
  #define SMPLRT_DIV 0x19
@@ -27,6 +42,8 @@ const char* serverURL = "http://localhost:8080/api/sensor-data"; // Change to yo
  #define ACCEL_CONFIG 0x1C
  #define ACCEL_XOUT_H 0x3B
  #define GYRO_XOUT_H 0x43
+
+
  
  // Calibration data
  float gyroXCal = 0, gyroYCal = 0, gyroZCal = 0;
