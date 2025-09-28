@@ -1,0 +1,7 @@
+{
+  "manual_sensitivity": 1.0,
+  "socket_max_power": 800,
+  "simulator_angle_cycle_seconds": 10.0,
+  "simulator_power_cycle_seconds": 3.0,
+  "friction": 0.992
+}

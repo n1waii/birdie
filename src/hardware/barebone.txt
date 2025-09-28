@@ -1,0 +1,29 @@
+#include <Arduino.h>
+#include <WiFi.h>
+
+const char* ssid = "My_ESP32_Test_AP";
+const char* password = "password123";
+
+void setup() {
+  Serial.begin(115200);
+  delay(100);
+
+  Serial.println("Starting Access Point...");
+
+  // Attempt to start the Soft AP
+  if (!WiFi.softAP(ssid, password)) {
+    Serial.println("Failed to start Access Point!");
+    return; // Stop here if it fails
+  }
+
+  IPAddress myIP = WiFi.softAPIP();
+  Serial.print("Access Point created. IP address: ");
+  Serial.println(myIP);
+  Serial.print("Network Name (SSID): ");
+  Serial.println(ssid);
+}
+
+void loop() {
+  // Do nothing. Just keep the AP running.
+  delay(1000);
+}
