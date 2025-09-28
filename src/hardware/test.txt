@@ -1,0 +1,51 @@
+#include <Arduino.h>
+
+const int finPin = 16;  // PWM-capable
+const int rinPin = 17;  // PWM-capable
+
+const int freq = 5000;
+const int resolution = 10; // 0-1023
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  Serial.println("Starting motor full power test...");
+
+  ledcSetup(0, freq, resolution);
+  ledcAttachPin(finPin, 0);
+  ledcWrite(0, 0);
+
+  ledcSetup(1, freq, resolution);
+  ledcAttachPin(rinPin, 1);
+  ledcWrite(1, 0);
+}
+
+void loop() {
+  // Forward 100%
+  Serial.println("Forward 100%");
+  ledcWrite(0, 1023);  // max PWM
+  ledcWrite(1, 0);     // reverse off
+  Serial.print("FIN PWM: "); Serial.println(1023);
+  Serial.print("RIN PWM: "); Serial.println(0);
+  delay(2000);
+
+  // Stop
+  Serial.println("Stop");
+  ledcWrite(0, 0);
+  ledcWrite(1, 0);
+  delay(1000);
+
+  // Reverse 100%
+  Serial.println("Reverse 100%");
+  ledcWrite(0, 0);     
+  ledcWrite(1, 1023);  // max reverse PWM
+  Serial.print("FIN PWM: "); Serial.println(0);
+  Serial.print("RIN PWM: "); Serial.println(1023);
+  delay(2000);
+
+  // Stop
+  Serial.println("Stop");
+  ledcWrite(0, 0);
+  ledcWrite(1, 0);
+  delay(1000);
+}

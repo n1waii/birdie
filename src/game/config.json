@@ -1,7 +1,30 @@
 {
-  "manual_sensitivity": 1.0,
-  "socket_max_power": 800,
+  "manual_sensitivity": 5.0,
+  "socket_max_power": 1500,
   "simulator_angle_cycle_seconds": 10.0,
   "simulator_power_cycle_seconds": 3.0,
-  "friction": 0.992
+  "friction": 0.992,
+
+  "aim_axis": "x",
+  "gyro_rate_is_rad_per_s": true,
+  "aim_deadzone_dps": 4.0,
+  "aim_wrap_deg": 180.0,
+
+  "bias_max_samples": 60,
+  "bias_gyro_steady_dps": 3.0,
+  "bias_accel_steady_g": 0.12,
+
+  "accel_baseline_alpha": 0.10,
+  "mag_baseline_alpha": 0.10,
+
+  "accel_swing_axis": "z",
+  "swing_down_trig_axis_g": -0.35,
+  "swing_down_trig_mag_g": -0.25,
+  "swing_end_threshold_g": 0.12,
+  "swing_max_window_s": 0.50,
+
+  "power_peak_min_g": 0.18,
+  "power_peak_max_g": 1.20,
+  "power_smoothing_alpha": 0.30,
+  "snap_power_on_shoot": true
 }

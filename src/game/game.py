@@ -1,11 +1,12 @@
 # game.py
 import pygame
 import sys
+import time
 from collections import deque
 from level import Level, LEVEL_DATA
 from ball import Ball
 import math
-from shot_data import get_latest_shot_data
+from shot_data import get_latest_shot_data, start_new_swing
 from config import CONFIG
 from player import PlayerManager
 
@@ -27,6 +28,12 @@ BUTTON_TEXT_COLOR = (255, 255, 255)
 OVERLAY_COLOR = (0, 0, 0, 180)
 HUD_BG_COLOR = (40, 40, 40, 200)
 HUD_HIGHLIGHT_COLOR = (80, 80, 80, 200)
+POWER_BAR_BG = (30, 30, 30, 200)
+POWER_BAR_BORDER = (200, 200, 200)
+POWER_BAR_FILL = (255, 255, 0)
+
+# Preview floor so path dots appear before strike in socket mode (configurable)
+PREVIEW_MIN_POWER = float(CONFIG.get("preview_min_power", 0.35))
 
 class Game:
     def __init__(self, sensor_server):
@@ -45,8 +52,9 @@ class Game:
         self.final_scores = {}
         self.next_level_index = 1
         
-        self.dt = 1.0 / PHYSICS_HZ 
+        self.dt = 1.0 / PHYSICS_HZ  # physics tick
         self.accumulator = 0.0
+        self.frame_dt = 1.0 / TARGET_FPS  # render tick, updated each frame
         
         self.control_mode = 'socket'
         self.show_path = True
@@ -55,9 +63,20 @@ class Game:
         self.mouse_down_pos = None
 
         self.current_shot_angle = 0.0
-        self.current_shot_power = 0.0
+        self.current_shot_power = 0.0       # smoothed/final power for actual shot
+        self.current_shot_power_raw = 0.0   # instantaneous preview power for UI/path
         self.direction_vector = pygame.Vector2(0)
         self.direction_vector_goal = pygame.Vector2(0)
+        self.ui_power_preview = 0.0  # 0..1 for the on-screen power bar
+
+        # Auto-shoot debounce and edge detect
+        self.last_auto_shot_time = 0.0
+        self.auto_shot_cooldown_s = 0.25
+        self._last_shoot_flag = False
+
+        # Aim lock from sensor
+        self.aim_locked = False
+        self.lock_angle = 0.0  # radians
 
         # --- UI Buttons ---
         self.mode_button_rect = pygame.Rect(SCREEN_WIDTH - 220, SCREEN_HEIGHT - 110, 210, 40)
@@ -83,22 +102,40 @@ class Game:
         self.level = Level(level_info)
         
         self.player_manager.prepare_for_level(self.level.start_pos)
+        start_new_swing()  # reset aim/swing detector for new level
+        self._last_shoot_flag = False
+        self.aim_locked = False
+        self.lock_angle = 0.0
 
     def run(self):
         while self.is_running:
-            raw_delta_time = self.clock.tick(TARGET_FPS) / 1000.0
-            delta_time = min(raw_delta_time, MAX_DELTA_TIME)
-            self.accumulator += delta_time
+            self.frame_dt = min(self.clock.tick(TARGET_FPS) / 1000.0, MAX_DELTA_TIME)
+            self.accumulator += self.frame_dt
 
             self.process_input()
 
             if self.game_state == 'PLAYING':
                 if self.control_mode == 'socket':
                     shot_data = get_latest_shot_data(self.sensor_server)
-                    self.current_shot_angle = shot_data["angle"]
-                    self.current_shot_power = shot_data["power"]
-                
-                while self.accumulator >= self.dt: self.update(self.dt); self.accumulator -= self.dt
+                    # Use locked angle when armed
+                    self.aim_locked = bool(shot_data.get("aim_locked", False))
+                    self.lock_angle = float(shot_data.get("angle_locked", self.lock_angle))
+                    current_angle = float(shot_data.get("angle", 0.0))
+                    self.current_shot_angle = self.lock_angle if self.aim_locked else current_angle
+
+                    # Power
+                    self.current_shot_power = float(shot_data.get("power", 0.0))
+                    self.current_shot_power_raw = float(shot_data.get("power_raw", self.current_shot_power))
+
+                    # Auto-shoot only on rising edge of shoot flag
+                    shoot_flag = bool(shot_data.get("shoot", False))
+                    if shoot_flag and not self._last_shoot_flag:
+                        self.try_auto_shoot()
+                    self._last_shoot_flag = shoot_flag
+
+                while self.accumulator >= self.dt:
+                    self.update(self.dt)
+                    self.accumulator -= self.dt
             
             self.render(self.screen)
         self.cleanup()
@@ -151,16 +188,41 @@ class Game:
                 self.player_manager.record_shot()
     
     def handle_socket_input(self, event):
+        # Manual override with keyboard for testing
         active_ball = self.player_manager.get_active_ball()
         if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
             power = self.current_shot_power * CONFIG['socket_max_power']
-            vel_x = power * math.cos(self.current_shot_angle)
-            vel_y = -power * math.sin(self.current_shot_angle)
-            active_ball.shoot(pygame.Vector2(vel_x, vel_y))
-            self.player_manager.record_shot()
+            if power > 0.0:
+                vel_x = power * math.cos(self.current_shot_angle)
+                vel_y = -power * math.sin(self.current_shot_angle)
+                active_ball.shoot(pygame.Vector2(vel_x, vel_y))
+                self.player_manager.record_shot()
+                start_new_swing()
+                self._last_shoot_flag = False
+                self.aim_locked = False
+                self.lock_angle = 0.0
+
+    def try_auto_shoot(self):
+        now = time.time()
+        if (now - self.last_auto_shot_time) < self.auto_shot_cooldown_s:
+            return
+        active_ball = self.player_manager.get_active_ball()
+        if not active_ball.is_stationary():
+            return
+        power = self.current_shot_power * CONFIG['socket_max_power']
+        if power <= 0.0:
+            return
+        vel_x = power * math.cos(self.current_shot_angle)
+        vel_y = -power * math.sin(self.current_shot_angle)
+        active_ball.shoot(pygame.Vector2(vel_x, vel_y))
+        self.player_manager.record_shot()
+        self.last_auto_shot_time = now
+        start_new_swing()
+        self._last_shoot_flag = False
+        self.aim_locked = False
+        self.lock_angle = 0.0
 
     def update(self, dt: float):
-        #print(self.sensor_server.get_latest_data()) # Fetch latest sensor data if needed
         self.level.update()
         all_walls = self.level.get_all_walls()
         
@@ -212,6 +274,8 @@ class Game:
         active_ball = self.player_manager.get_active_ball()
         if active_ball.is_stationary():
             self.draw_aiming_elements(surface, active_ball)
+        else:
+            self.ui_power_preview = 0.0  # hide power when ball is moving
         
         for player_num, ball in self.player_manager.balls.items():
             if not ball.in_hole:
@@ -249,43 +313,64 @@ class Game:
         surface.fill(COURSE_GREEN)
 
     def draw_aiming_elements(self, surface: pygame.Surface, active_ball: Ball):
-        #direction_vector = pygame.Vector2(0)
-        power_normalized = 1
+        power_normalized = 0.0
 
         if self.control_mode == 'socket':
+            # Framerate-independent lerp toward current aim
             lerp_speed = 100.0 
-            
-            # 2. Calculate a framerate-independent alpha
-            alpha = min(lerp_speed * self.dt, 1.0)
+            alpha = min(lerp_speed * self.frame_dt, 1.0)
 
-            direction_x = math.cos(self.current_shot_angle); direction_y = -math.sin(self.current_shot_angle)
+            angle_for_draw = self.lock_angle if self.aim_locked else self.current_shot_angle
+            direction_x = math.cos(angle_for_draw)
+            direction_y = -math.sin(angle_for_draw)
             self.direction_vector_goal = pygame.Vector2(direction_x, direction_y)
-            self.direction_vector = self.direction_vector.lerp(self.direction_vector_goal, alpha); 
-            #power_normalized = self.current_shot_power
+            self.direction_vector = self.direction_vector.lerp(self.direction_vector_goal, alpha)
+
+            # Use raw power for preview responsiveness
+            power_normalized = max(0.0, min(1.0, float(self.current_shot_power_raw)))
+            self.ui_power_preview = power_normalized
+
         elif self.control_mode == 'manual' and self.is_aiming:
             vec = pygame.Vector2(self.mouse_down_pos) - pygame.Vector2(pygame.mouse.get_pos())
-            if vec.length() > 0: self.direction_vector = vec.normalize()
+            if vec.length() > 0:
+                self.direction_vector = vec.normalize()
             sensitivity_divisor = 200 / CONFIG['manual_sensitivity']
             power_normalized = min(vec.length() / sensitivity_divisor, 1.0)
+            self.ui_power_preview = power_normalized
+        else:
+            self.ui_power_preview = 0.0
 
         if self.direction_vector.length() > 0:
             line_end = active_ball.pos - self.direction_vector * (50 + (power_normalized * 150))
             pygame.draw.line(surface, AIM_LINE_COLOR, active_ball.pos, line_end, 3)
+
             if self.show_path:
-                power = power_normalized * CONFIG['socket_max_power']
-                sim_vel = self.direction_vector * power; sim_pos = active_ball.pos.copy(); path_points = []
+                # Use a preview floor in socket mode so dots appear before the strike
+                sim_power_norm = max(power_normalized, PREVIEW_MIN_POWER) if self.control_mode == 'socket' else power_normalized
+                power = sim_power_norm * CONFIG['socket_max_power']
+
+                sim_vel = self.direction_vector * power
+                sim_pos = active_ball.pos.copy()
+                path_points = []
                 all_current_walls = self.level.get_all_walls()
+
                 for i in range(150):
                     sim_vel *= CONFIG['friction']
-                    if sim_vel.length() < 1: break
+                    if sim_vel.length() < 1:
+                        break
                     sim_pos += sim_vel * self.dt
                     for wall in all_current_walls:
-                        if wall.collidepoint(sim_pos):
-                            if sim_pos.x < wall.left + active_ball.radius or sim_pos.x > wall.right-active_ball.radius: sim_vel.x *= -1
-                            if sim_pos.y < wall.top + active_ball.radius or sim_pos.y > wall.bottom-active_ball.radius: sim_vel.y *= -1
-                    if i % 5 == 0: path_points.append(sim_pos.copy())
+                        if wall.collidepoint(int(sim_pos.x), int(sim_pos.y)):
+                            if sim_pos.x < wall.left + active_ball.radius or sim_pos.x > wall.right - active_ball.radius:
+                                sim_vel.x *= -1
+                            if sim_pos.y < wall.top + active_ball.radius or sim_pos.y > wall.bottom - active_ball.radius:
+                                sim_vel.y *= -1
+                    if i % 5 == 0:
+                        path_points.append(sim_pos.copy())
+
                 if len(path_points) > 1:
-                    for point in path_points: pygame.draw.circle(surface, PATH_COLOR, point, 2)
+                    for point in path_points:
+                        pygame.draw.circle(surface, PATH_COLOR, (int(point.x), int(point.y)), 2)
 
     def draw_hud(self, surface: pygame.Surface):
         info_texts = [f"Hole: {self.current_level_index}", f"Par: {self.level.par}"]
@@ -307,7 +392,6 @@ class Game:
             
             player_text_rect = player_text_surf.get_rect(midleft=(box_rect.left + 15, box_rect.centery))
             strokes_text_rect = strokes_text_surf.get_rect(midright=(box_rect.right - 15, box_rect.centery))
-            
             surface.blit(player_text_surf, player_text_rect)
             surface.blit(strokes_text_surf, strokes_text_rect)
 
@@ -317,6 +401,37 @@ class Game:
         path_color = BUTTON_HOVER_COLOR if self.path_button_rect.collidepoint(mouse_pos) else BUTTON_BG_COLOR
         self.draw_button(surface, self.mode_button_rect, mode_text, mode_color)
         self.draw_button(surface, self.path_button_rect, path_text, path_color)
+
+        self.draw_power_bar(surface)
+
+    def draw_power_bar(self, surface: pygame.Surface):
+        # Bottom-center power bar
+        bar_width = 360
+        bar_height = 22
+        bar_x = (SCREEN_WIDTH - bar_width) // 2
+        bar_y = SCREEN_HEIGHT - 90
+
+        # Background with alpha
+        bg_surf = pygame.Surface((bar_width, bar_height), pygame.SRCALPHA)
+        bg_surf.fill(POWER_BAR_BG)
+        surface.blit(bg_surf, (bar_x, bar_y))
+
+        # Border
+        pygame.draw.rect(surface, POWER_BAR_BORDER, pygame.Rect(bar_x, bar_y, bar_width, bar_height), 2, border_radius=6)
+
+        # Fill
+        fill_w = int(max(0.0, min(1.0, self.ui_power_preview)) * (bar_width - 4))
+        if fill_w > 0:
+            fill_rect = pygame.Rect(bar_x + 2, bar_y + 2, fill_w, bar_height - 4)
+            pygame.draw.rect(surface, POWER_BAR_FILL, fill_rect, border_radius=4)
+
+        # Label and percent
+        label = self.font.render("Power", True, UI_TEXT_COLOR)
+        pct_text = self.font.render(f"{int(self.ui_power_preview * 100):d}%", True, UI_TEXT_COLOR)
+        label_rect = label.get_rect(midright=(bar_x - 10, bar_y + bar_height // 2))
+        pct_rect = pct_text.get_rect(midleft=(bar_x + bar_width + 10, bar_y + bar_height // 2))
+        surface.blit(label, label_rect)
+        surface.blit(pct_text, pct_rect)
 
     def draw_button(self, surface, rect, text, color):
         pygame.draw.rect(surface, color, rect, border_radius=8)

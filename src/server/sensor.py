@@ -29,7 +29,7 @@ class SensorServer:
                     sensor_data = json.loads(message)
                     with self._data_lock:
                         self._latest_data = sensor_data
-                    print(f"Received from {addr}: {sensor_data}")
+                    #print(f"Received from {addr}: {sensor_data}")
                 except json.JSONDecodeError:
                     print(f"[WARNING] Invalid JSON received from {addr}: {message}")
 
