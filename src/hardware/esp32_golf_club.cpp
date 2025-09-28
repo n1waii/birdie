@@ -1,165 +1,133 @@
 /*
- * ESP32-S3 Golf Club Sensor
- * Displays raw gyroscope and accelerometer data in Serial Monitor
- * Sends data to server via WiFi
+ * ESP32-S3 Golf Club Sensor - Cleaned UDP Client
  */
 
 #include <Arduino.h>
 #include <WiFi.h>
-#include <HTTPClient.h>
 #include <Wire.h>
 #include <ArduinoJson.h>
-#include <WiFiUdp.h> // Use the UDP library
+#include <WiFiUdp.h>
 
-
-void calibrateGyro();
+// --- Function Declarations ---
 void initializeMPU();
+void calibrateGyro();
+void connectToWiFi();
 void readAccelData(float* x, float* y, float* z);
 void readGyroData(float* x, float* y, float* z);
-float readTemperature();
-void writeRegister(uint8_t deviceAddress, uint8_t address, uint8_t val);
-void connectToWiFi();
-void sendDataToServer(float accelX, float accelY, float accelZ,
-                      float gyroX, float gyroY, float gyroZ,
-                      float absGyroX, float absGyroY, float absGyroZ,
-                      float temperature);
-              
+void sendDataToServer(float accelX, float accelY, float accelZ, float gyroX, float gyroY, float gyroZ, float absGyroX, float absGyroY, float absGyroZ);
 
-// const char* ssid = "qwerty";
-// const char* password = "qwerty12345";
-// const char* serverIP = "10.62.26.197"; // <-- CHANGE THIS to your PC's IP
-
-const char* ssid = "qwerty"; // Your Wi-Fi network name
-const char* password = "qwerty12345"; // Your Wi-Fi password
-
-// --- UDP Client Configuration ---
-const char* serverIP = "10.62.26.197";
+// --- Configuration ---
+const char* ssid = "qwerty";
+const char* password = "qwerty12345";
+const char* serverIP = "10.62.26.197"; // Your Mac's IP on the hotspot
 const uint16_t serverPort = 50000;
 
-WiFiUDP client; // Make the client global to maintain connection
+WiFiUDP udp;
 
-            
-// MPU6050 I2C address
+// --- MPU6050 & Sensor Variables ---
 #define MPU_ADDR 0x68
+#define ACCEL_XOUT_H 0x3B
+#define GYRO_XOUT_H 0x43
+#define PWR_MGMT_1 0x6B
 
-// WiFi credentials - UPDATE THESE
-// const char* ssid = "YOUR_WIFI_SSID";        // Change to your WiFi name
-// const char* password = "YOUR_WIFI_PASSWORD"; // Change to your WiFi password
+float gyroXCal = 0, gyroYCal = 0, gyroZCal = 0;
+float absGyroX = 0, absGyroY = 0, absGyroZ = 0;
+unsigned long lastTime = 0;
 
-// Server endpoint - UPDATE THIS
-// const char* serverURL = "http://localhost:8080/api/sensor-data"; // Change to your laptop's IP 
-
- // MPU6050 register addresses
- #define PWR_MGMT_1 0x6B
- #define SMPLRT_DIV 0x19
- #define CONFIG 0x1A
- #define GYRO_CONFIG 0x1B
- #define ACCEL_CONFIG 0x1C
- #define ACCEL_XOUT_H 0x3B
- #define GYRO_XOUT_H 0x43
-
- 
- // Calibration data
- float gyroXCal = 0, gyroYCal = 0, gyroZCal = 0;
- bool calibrated = false;
- 
- // Absolute gyro values (accumulated rotation)
- float absGyroX = 0, absGyroY = 0, absGyroZ = 0;
- unsigned long lastTime = 0;
- 
+// --- Main Program ---
 void setup() {
   Serial.begin(115200);
+  Wire.begin(4, 5); // SDA=4, SCL=5
 
-  Serial.begin(115220);
-  delay(100);
-
-  // 1. Create the Access Point
-  
-  
-
-  // I2C pin configuration
-  Wire.begin(4, 5); // SDA=4, SCL=5 - change these if needed
-  
-  // Initialize MPU
   initializeMPU();
-  
-  // Connect to WiFi
   connectToWiFi();
-  
-  // Calibrate gyroscope
   calibrateGyro();
   
+  lastTime = millis();
   Serial.println("ESP32-S3 Golf Club Sensor Ready!");
-  Serial.println("Raw sensor data will be displayed below:");
-  Serial.println("Format: Accel(X,Y,Z) Gyro Rate(X,Y,Z) Abs Gyro(X,Y,Z) Temp(°C)");
-  Serial.println("Abs Gyro shows total rotation since startup (in degrees)");
-  Serial.println("Data will be sent to server via WiFi");
-  Serial.println("----------------------------------------");
 }
  
 void loop() {
-  //Check WiFi connection first
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("WiFi disconnected. Reconnecting...");
-    delay(500);
     connectToWiFi();
     return;
   }
 
-  
-  // Check server connection
-  // if (!client.connected()) {
-  //   Serial.println("Server disconnected. Reconnecting...");
-  //   client.stop();
-  //   if (!client.connect(serverIP, serverPort)) {
-  //     Serial.println("Failed to reconnect to server.");
-  //     delay(500);
-  //     return;
-  //   }
-  //   Serial.println("Reconnected to server!");
-  // }
-
-  // --- ADD DEBUG PRINTS BELOW ---
   float accelX, accelY, accelZ;
   readAccelData(&accelX, &accelY, &accelZ);
   
   float gyroX, gyroY, gyroZ;
   readGyroData(&gyroX, &gyroY, &gyroZ);
   
-  // (Calculation code is probably fine, but we'll leave prints)
   unsigned long currentTime = millis();
   float deltaTime = (currentTime - lastTime) / 1000.0;
   lastTime = currentTime;
-  absGyroX += (gyroX - gyroXCal) * deltaTime;
-  absGyroY += (gyroY - gyroYCal) * deltaTime;
-  absGyroZ += (gyroZ - gyroZCal) * deltaTime;
-  float temperature = readTemperature();
-
-  sendDataToServer(accelX, accelY, accelZ, (gyroX - gyroXCal), (gyroY - gyroYCal), (gyroZ - gyroZCal), absGyroX, absGyroY, absGyroZ, temperature);
   
-  delay(50);
+  float calibratedGyroX = gyroX - gyroXCal;
+  float calibratedGyroY = gyroY - gyroYCal;
+  float calibratedGyroZ = gyroZ - gyroZCal;
+
+  absGyroX += calibratedGyroX * deltaTime;
+  absGyroY += calibratedGyroY * deltaTime;
+  absGyroZ += calibratedGyroZ * deltaTime;
+
+  sendDataToServer(accelX, accelY, accelZ, calibratedGyroX, calibratedGyroY, calibratedGyroZ, absGyroX, absGyroY, absGyroZ);
+  
+  // Use a stable delay (e.g., 50ms for 20 packets/sec)
+  delay(50); 
 }
- 
- void initializeMPU() {
-   // Wake up MPU
-   writeRegister(MPU_ADDR, PWR_MGMT_1, 0x00);
-   delay(100);
-   
-   // Set sample rate to 1kHz
-   writeRegister(MPU_ADDR, SMPLRT_DIV, 0x07);
-   
-   // Configure accelerometer (±2g)
-   writeRegister(MPU_ADDR, ACCEL_CONFIG, 0x00);
-   
-   // Configure gyroscope (±250°/s)
-   writeRegister(MPU_ADDR, GYRO_CONFIG, 0x00);
-   
-   // Configure DLPF
-   writeRegister(MPU_ADDR, CONFIG, 0x06);
-   
-   Serial.println("MPU initialized");
- }
- 
+
+// --- Functions ---
+void connectToWiFi() {
+  Serial.print("Connecting to WiFi...");
+  WiFi.disconnect(true);
+  delay(100);
+  WiFi.begin(ssid, password);
+  
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+    delay(100); // Use a 500ms delay to give it time to connect
+    Serial.print(".");
+    attempts++;
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWiFi connected!");
+    Serial.print("IP address: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\nWiFi connection failed!");
+  }
+}
+
+void sendDataToServer(float accelX, float accelY, float accelZ, 
+                      float gyroX, float gyroY, float gyroZ,
+                      float absGyroX, float absGyroY, float absGyroZ) {
+  JsonDocument doc;
+  doc["accelerometer"]["x"] = isnan(accelX) ? 0 : accelX;
+  doc["accelerometer"]["y"] = isnan(accelY) ? 0 : accelY;
+  doc["accelerometer"]["z"] = isnan(accelZ) ? 0 : accelZ;
+  doc["gyroscope_rate"]["x"] = isnan(gyroX) ? 0 : gyroX;
+  doc["gyroscope_rate"]["y"] = isnan(gyroY) ? 0 : gyroY;
+  doc["gyroscope_rate"]["z"] = isnan(gyroZ) ? 0 : gyroZ;
+  doc["gyroscope_absolute"]["x"] = isnan(absGyroX) ? 0 : absGyroX;
+  doc["gyroscope_absolute"]["y"] = isnan(absGyroY) ? 0 : absGyroY;
+  doc["gyroscope_absolute"]["z"] = isnan(absGyroZ) ? 0 : absGyroZ;
+  
+  udp.beginPacket(serverIP, serverPort);
+  serializeJson(doc, udp);
+  udp.endPacket();
+}
+
+void initializeMPU() {
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(PWR_MGMT_1);
+  Wire.write(0);
+  Wire.endTransmission(true);
+  Serial.println("MPU initialized");
+}
+
  void calibrateGyro() {
    Serial.println("Calibrating gyroscope...");
    Serial.println("Keep the sensor still during calibration...");
@@ -180,7 +148,7 @@ void loop() {
    gyroYCal = sumY / samples;
    gyroZCal = sumZ / samples;
    
-   calibrated = true;
+  //calibrated = true;
   //  Serial.println("Gyroscope calibrated");
   //  Serial.print("Calibration values: X=");
   //  Serial.print(gyroXCal, 3);
@@ -238,85 +206,3 @@ void writeRegister(uint8_t deviceAddress, uint8_t address, uint8_t val) {
   Wire.write(val);
   Wire.endTransmission();
 }
-
-void connectToWiFi() {
-  WiFi.disconnect(true); 
-  WiFi.begin(ssid, password);
-  
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-    delay(50);
-    Serial.print(".");
-    attempts++;
-  }
-  
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println();
-    Serial.println("WiFi connected!");
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
-    Serial.print("ESP32 MAC Address: ");
-    Serial.println(WiFi.macAddress());
-  } else {
-    Serial.println();
-    Serial.println("WiFi connection failed!");
-  }
-}
-
-void sendDataToServer(float accelX, float accelY, float accelZ, 
-                     float gyroX, float gyroY, float gyroZ,
-                     float absGyroX, float absGyroY, float absGyroZ, 
-                     float temperature) {
-  // HTTPClient http;
-  // http.begin(serverURL);
-  // http.addHeader("Content-Type", "application/json");
-  
-  // Create JSON payload
-  JsonDocument doc;
-  doc["device_id"] = "golf_club_001";
-  doc["timestamp"] = millis();
-  
-  // Accelerometer data
-  doc["accelerometer"]["x"] = accelX;
-  doc["accelerometer"]["y"] = accelY;
-  doc["accelerometer"]["z"] = accelZ;
-  
-  // Gyroscope rate data
-  doc["gyroscope_rate"]["x"] = gyroX;
-  doc["gyroscope_rate"]["y"] = gyroY;
-  doc["gyroscope_rate"]["z"] = gyroZ;
-  
-  // Absolute gyroscope data (accumulated rotation)
-  doc["gyroscope_absolute"]["x"] = absGyroX;
-  doc["gyroscope_absolute"]["y"] = absGyroY;
-  doc["gyroscope_absolute"]["z"] = absGyroZ;
-  
-  // Temperature
-  doc["temperature"] = temperature;
-  
-
-  // Write the JSON data to the packet buffer
-  //serializeJson(doc, client);
-
-  // Send the packet
-  //String jsonString;
-
-  client.beginPacket(serverIP, serverPort);
-  serializeJson(doc, client);
-  //client.print(jsonString); // Send the string
-  client.endPacket();
-  //int httpResponseCode = http.POST(jsonString);
-  //client.print('\n'); 
-  //Serial.println("Data sent successfully.");
-
-  // if (httpResponseCode > 0) {
-  //   String response = http.getString();
-  //   Serial.println("Data sent successfully. Response: " + response);
-  // } else {
-  //   Serial.println("Error sending data. HTTP code: " + String(httpResponseCode));
-  // }
-  
-
-  // http.end();
-}
- 
