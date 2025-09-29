@@ -22,7 +22,7 @@ DEFAULT_CONFIG = {
     "accel_baseline_alpha": 0.10,
     "mag_baseline_alpha": 0.10,
 
-    "accel_swing_axis": "z",
+    "accel_swing_axis": "y",
     "swing_down_trig_axis_g": -0.35,
     "swing_down_trig_mag_g": -0.25,
     "swing_end_threshold_g": 0.12,

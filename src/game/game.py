@@ -320,7 +320,7 @@ class Game:
             lerp_speed = 100.0 
             alpha = min(lerp_speed * self.frame_dt, 1.0)
 
-            angle_for_draw = self.lock_angle if self.aim_locked else self.current_shot_angle
+            angle_for_draw = self.current_shot_angle
             direction_x = math.cos(angle_for_draw)
             direction_y = -math.sin(angle_for_draw)
             self.direction_vector_goal = pygame.Vector2(direction_x, direction_y)

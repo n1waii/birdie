@@ -159,7 +159,7 @@ def _integrate_aim(gyro_rate_value, accel, dt_s):
     # Integrate
     #print("a", accelMag)
     aim_angle_deg += dps * dt_s * .1 / (accelMag)
-    aim_angle_deg = _wrap_deg(aim_angle_deg, AIM_WRAP_DEG) 
+    #aim_angle_deg = _wrap_deg(aim_angle_deg, AIM_WRAP_DEG) 
 
 def _update_bias_and_baselines(accel, gyro_dps):
     """Seed and update baselines. Calibrate gyro bias when steady."""
