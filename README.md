@@ -1,3 +1,5 @@
+Video Demonstration: https://www.youtube.com/watch?v=2zI47ZAjMno&t=31s
+
 # Golf Club Sensor System
 
 A real-time golf club motion tracking system using ESP32-S3 and MPU sensor for MHacks 25.
