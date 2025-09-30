@@ -22,7 +22,7 @@ A real-time golf club motion tracking system using ESP32-S3 and MPU sensor for M
 
 1. **Setup ESP32**: Upload `esp32_golf_club.ino` to your ESP32-S3
 2. **Configure WiFi**: Update WiFi credentials in the Arduino code
-3. **Start Server**: Run `python server.py` on your laptop
+3. **Start Server**: Run `python server.py` on your laptop (Alternatively, if you want to play the game with the server, run `python src/game/main.py`)
 4. **View Dashboard**: Open `http://localhost:8080` in your browser
 
 ## Files
